@@ -1,7 +1,6 @@
 # MVSplit-DiT (1000 layers)
 
-A 1000-layer Diffusion Transformer trained with **FusedMVSplitNorm1** — a residual scheme that splits each block's update into a *mean* branch and a *variance* branch, each with its own learnable per-channel gate, followed by RMSNorm. Text conditioning is via input concatenation; sampling uses rectified-flow / flow-matching.
-
+Paper: <https://arxiv.org/abs/2605.06169>  
 Released weights: <https://huggingface.co/StableKirito/mvsplit-dit-1000l>
 
 ## Files
@@ -97,4 +96,13 @@ the upstream copyright header, license text, and a list of modifications. See
 
 ## Citation
 
-A pre-print is on the way; check the HF repo for updates.
+Paper: <https://arxiv.org/abs/2605.06169>
+
+```bibtex
+@article{lu2026mms,
+  title   = {Mean Mode Screaming: Mean--Variance Split Residuals for 1000-Layer Diffusion Transformers},
+  author  = {Lu, Pengqi},
+  journal = {arXiv preprint arXiv:2605.06169},
+  year    = {2026},
+}
+```
