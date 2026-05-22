@@ -15,12 +15,11 @@ if str(REPO_SRC) not in sys.path:
 
 try:
     from safetensors.torch import load_file as safe_load_file
-    from safetensors.torch import save_file as safe_save_file
 except Exception:
     safe_load_file = None
-    safe_save_file = None
 
 from diffusers.models.transformers import MVSplitDiTTransformer2DModel
+from diffusers.schedulers import MVSplitFlowMatchScheduler
 
 
 def _load_state_dict(checkpoint_path: str) -> Dict[str, torch.Tensor]:
@@ -49,21 +48,21 @@ def _clean_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Te
     return cleaned
 
 
-def _save_config(output_dir: Path, config: Dict[str, Any], name: str):
+def _save_json(output_dir: Path, payload: Dict[str, Any], name: str):
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(output_dir / name, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, sort_keys=True)
+        json.dump(payload, f, indent=2, sort_keys=True)
         f.write("\n")
 
 
-def _save_weights(output_dir: Path, state_dict: Dict[str, torch.Tensor], safe_serialization: bool):
-    output_dir.mkdir(parents=True, exist_ok=True)
-    if safe_serialization:
-        if safe_save_file is None:
-            raise ImportError("Install safetensors or pass --no-safe-serialization.")
-        safe_save_file(state_dict, str(output_dir / "diffusion_pytorch_model.safetensors"), metadata={"format": "pt"})
-    else:
-        torch.save(state_dict, output_dir / "diffusion_pytorch_model.bin")
+def _print_state_dict_mismatch(missing_keys, unexpected_keys):
+    if not missing_keys and not unexpected_keys:
+        return
+    print("Checkpoint mismatch while loading into MVSplitDiTTransformer2DModel.")
+    if missing_keys:
+        print("Missing keys:", missing_keys[:10])
+    if unexpected_keys:
+        print("Unexpected keys:", unexpected_keys[:10])
 
 
 def _write_model_index(output_dir: Path, include_vae: bool, include_text: bool):
@@ -78,7 +77,7 @@ def _write_model_index(output_dir: Path, include_vae: bool, include_text: bool):
     if include_text:
         model_index["text_encoder"] = ["transformers", "AutoModel"]
         model_index["tokenizer"] = ["transformers", "AutoTokenizer"]
-    _save_config(output_dir, model_index, "model_index.json")
+    _save_json(output_dir, model_index, "model_index.json")
 
 
 def parse_args():
@@ -139,26 +138,27 @@ def main():
     }
 
     state_dict = _load_state_dict(args.checkpoint)
-    if args.check_load:
-        model = MVSplitDiTTransformer2DModel(**{k: v for k, v in transformer_config.items() if not k.startswith("_")})
-        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-        if missing_keys or unexpected_keys:
-            print("Missing keys:", missing_keys[:10])
-            print("Unexpected keys:", unexpected_keys[:10])
+    model = MVSplitDiTTransformer2DModel(**{k: v for k, v in transformer_config.items() if not k.startswith("_")})
+    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+    if missing_keys or unexpected_keys:
+        _print_state_dict_mismatch(missing_keys, unexpected_keys)
+        if args.check_load:
             raise SystemExit(1)
+    model.save_pretrained(transformer_dir, safe_serialization=args.safe_serialization)
 
-    _save_config(transformer_dir, transformer_config, "config.json")
-    _save_weights(transformer_dir, state_dict, args.safe_serialization)
-    _save_config(
-        scheduler_dir,
-        {
-            "_class_name": "MVSplitFlowMatchScheduler",
-            "mode": "ode",
-            "num_train_timesteps": 1000,
-            "time_shift_alpha": args.time_shift_alpha,
-        },
-        "scheduler_config.json",
+    scheduler = MVSplitFlowMatchScheduler(
+        mode="ode",
+        num_train_timesteps=1000,
+        time_shift_alpha=args.time_shift_alpha,
     )
+    scheduler.save_pretrained(scheduler_dir)
+
+    if args.check_load:
+        reloaded_model = MVSplitDiTTransformer2DModel.from_pretrained(transformer_dir)
+        missing_keys, unexpected_keys = reloaded_model.load_state_dict(state_dict, strict=False)
+        if missing_keys or unexpected_keys:
+            _print_state_dict_mismatch(missing_keys, unexpected_keys)
+            raise SystemExit(1)
 
     if args.copy_vae is not None:
         vae_path = output_dir / "vae"
