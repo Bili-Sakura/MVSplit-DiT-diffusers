@@ -66,8 +66,10 @@ def test_pipeline_latent_output_smoke():
         mlp_hidden_dim=64,
         context_dim=16,
     )
+    scheduler = FlowMatchEulerDiscreteScheduler()
     pipe = MVSplitDiTPipeline(
         transformer=transformer,
+        scheduler=scheduler,
         vae=None,
         text_encoder=_DummyTextEncoder(hidden_size=16),
         tokenizer=_DummyTokenizer(),

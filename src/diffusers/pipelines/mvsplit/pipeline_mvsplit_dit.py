@@ -6,7 +6,6 @@ import torch
 try:
     from diffusers.image_processor import VaeImageProcessor
     from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-    from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
     from diffusers.utils import BaseOutput
 except Exception:
     class BaseOutput(dict):
@@ -29,13 +28,6 @@ except Exception:
         def postprocess(self, image, output_type="pil"):
             return image
 
-    class FlowMatchEulerDiscreteScheduler:
-        def __init__(self, *args, **kwargs):
-            del args, kwargs
-            raise ImportError(
-                "FlowMatchEulerDiscreteScheduler is unavailable. Install the official `diffusers` package."
-            )
-
 
 @dataclass
 class MVSplitDiTPipelineOutput(BaseOutput):
@@ -46,8 +38,8 @@ class MVSplitDiTPipeline(DiffusionPipeline):
     """
     Text-to-latent/image pipeline for MVSplit DiT.
 
-    The pipeline uses the standard Diffusers scheduler interface and defaults to
-    `FlowMatchEulerDiscreteScheduler` from `diffusers`.
+    The pipeline uses the standard Diffusers scheduler interface and expects an
+    explicit scheduler module (for example `FlowMatchEulerDiscreteScheduler`).
     """
 
     model_cpu_offload_seq = "text_encoder->transformer->vae"
@@ -56,15 +48,13 @@ class MVSplitDiTPipeline(DiffusionPipeline):
     def __init__(
         self,
         transformer,
-        scheduler=None,
+        scheduler,
         vae=None,
         text_encoder=None,
         tokenizer=None,
         max_length: int = 256,
     ):
         super().__init__()
-        if scheduler is None:
-            scheduler = FlowMatchEulerDiscreteScheduler()
         self.register_modules(
             transformer=transformer,
             scheduler=scheduler,
