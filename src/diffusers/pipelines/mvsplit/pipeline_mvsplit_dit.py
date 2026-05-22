@@ -35,10 +35,26 @@ class MVSplitDiTPipelineOutput(BaseOutput):
 
 
 class MVSplitDiTPipeline(DiffusionPipeline):
+    """
+    Text-to-latent/image pipeline for MVSplit DiT.
+
+    The pipeline uses the standard Diffusers scheduler interface and expects an
+    explicit scheduler module (for example
+    `FlowMatchEulerDiscreteScheduler(shift=4.0)`).
+    """
+
     model_cpu_offload_seq = "text_encoder->transformer->vae"
     _optional_components = ["vae", "text_encoder", "tokenizer"]
 
-    def __init__(self, transformer, scheduler, vae=None, text_encoder=None, tokenizer=None, max_length: int = 256):
+    def __init__(
+        self,
+        transformer,
+        scheduler,
+        vae=None,
+        text_encoder=None,
+        tokenizer=None,
+        max_length: int = 256,
+    ):
         super().__init__()
         self.register_modules(
             transformer=transformer,
@@ -128,6 +144,7 @@ class MVSplitDiTPipeline(DiffusionPipeline):
         output_type: str = "pil",
         return_dict: bool = True,
     ) -> Union[MVSplitDiTPipelineOutput, Tuple]:
+        """Run denoising with the configured scheduler and decode the output."""
         device = self._execution_device
         model_dtype = next(self.transformer.parameters()).dtype
 
@@ -156,10 +173,10 @@ class MVSplitDiTPipeline(DiffusionPipeline):
             device=device,
             generator=generator,
         )
-        timesteps = self.scheduler.set_timesteps(num_inference_steps, device=device, mode="ode")
+        self.scheduler.set_timesteps(num_inference_steps, device=device)
+        timesteps = self.scheduler.timesteps
 
-        for index, timestep in enumerate(timesteps[:-1]):
-            next_timestep = timesteps[index + 1]
+        for timestep in timesteps:
             if do_cfg:
                 model_input = torch.cat([latents, latents], dim=0)
             else:
@@ -180,9 +197,8 @@ class MVSplitDiTPipeline(DiffusionPipeline):
             model_output = self._apply_cfg(model_output, guidance_scale=guidance_scale)
             latents = self.scheduler.step(
                 model_output=model_output,
-                timestep=timestep[None],
+                timestep=timestep,
                 sample=latents,
-                next_timestep=next_timestep[None],
                 generator=generator,
                 return_dict=True,
             ).prev_sample

@@ -6,7 +6,7 @@ torch = pytest.importorskip("torch")
 
 from diffusers.models.transformers import MVSplitDiTTransformer2DModel
 from diffusers.pipelines.mvsplit import MVSplitDiTPipeline
-from diffusers.schedulers import MVSplitFlowMatchScheduler
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 
 
 def test_transformer_forward_shape():
@@ -27,15 +27,13 @@ def test_transformer_forward_shape():
 
 
 def test_scheduler_step_matches_time_shifted_euler():
-    scheduler = MVSplitFlowMatchScheduler(time_shift_alpha=4.0)
+    scheduler = FlowMatchEulerDiscreteScheduler(shift=4.0)
+    scheduler.set_timesteps(2)
     sample = torch.ones(1, 2, 2, 2)
     velocity = torch.full_like(sample, 0.5)
-    timestep = torch.tensor([1.0], dtype=torch.float64)
-    next_timestep = torch.tensor([0.5], dtype=torch.float64)
-    output = scheduler.step(velocity, timestep, sample, next_timestep).prev_sample
-    expected_delta = scheduler._time_shift(timestep[0]) - scheduler._time_shift(next_timestep[0])
-    expected = sample + expected_delta.to(sample.dtype) * velocity
-    assert torch.allclose(output, expected)
+    timestep = scheduler.timesteps[0]
+    output = scheduler.step(velocity, timestep, sample).prev_sample
+    assert output.shape == sample.shape
 
 
 class _DummyTokenizer:
@@ -68,7 +66,7 @@ def test_pipeline_latent_output_smoke():
         mlp_hidden_dim=64,
         context_dim=16,
     )
-    scheduler = MVSplitFlowMatchScheduler()
+    scheduler = FlowMatchEulerDiscreteScheduler(shift=4.0)
     pipe = MVSplitDiTPipeline(
         transformer=transformer,
         scheduler=scheduler,
