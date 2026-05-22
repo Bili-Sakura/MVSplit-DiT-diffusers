@@ -6,6 +6,7 @@ import torch
 try:
     from diffusers.image_processor import VaeImageProcessor
     from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+    from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
     from diffusers.utils import BaseOutput
 except Exception:
     class BaseOutput(dict):
@@ -28,6 +29,13 @@ except Exception:
         def postprocess(self, image, output_type="pil"):
             return image
 
+    class FlowMatchEulerDiscreteScheduler:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+            raise ImportError(
+                "FlowMatchEulerDiscreteScheduler is unavailable. Install the official `diffusers` package."
+            )
+
 
 @dataclass
 class MVSplitDiTPipelineOutput(BaseOutput):
@@ -38,15 +46,25 @@ class MVSplitDiTPipeline(DiffusionPipeline):
     """
     Text-to-latent/image pipeline for MVSplit DiT.
 
-    The pipeline uses the standard Diffusers scheduler interface and is intended
-    to run with `FlowMatchEulerDiscreteScheduler` from `diffusers`.
+    The pipeline uses the standard Diffusers scheduler interface and defaults to
+    `FlowMatchEulerDiscreteScheduler` from `diffusers`.
     """
 
     model_cpu_offload_seq = "text_encoder->transformer->vae"
     _optional_components = ["vae", "text_encoder", "tokenizer"]
 
-    def __init__(self, transformer, scheduler, vae=None, text_encoder=None, tokenizer=None, max_length: int = 256):
+    def __init__(
+        self,
+        transformer,
+        scheduler=None,
+        vae=None,
+        text_encoder=None,
+        tokenizer=None,
+        max_length: int = 256,
+    ):
         super().__init__()
+        if scheduler is None:
+            scheduler = FlowMatchEulerDiscreteScheduler()
         self.register_modules(
             transformer=transformer,
             scheduler=scheduler,
@@ -135,7 +153,7 @@ class MVSplitDiTPipeline(DiffusionPipeline):
         output_type: str = "pil",
         return_dict: bool = True,
     ) -> Union[MVSplitDiTPipelineOutput, Tuple]:
-        """Run denoising with a FlowMatch Euler scheduler and decode the output."""
+        """Run denoising with the configured scheduler and decode the output."""
         device = self._execution_device
         model_dtype = next(self.transformer.parameters()).dtype
 

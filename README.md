@@ -5,7 +5,7 @@ This repository now follows a native Diffusers-compatible layout under:
 ```text
 src/diffusers/
   models/transformers/transformer_mvsplit_dit.py
-  schedulers/scheduling_flow_match_euler_discrete.py
+  schedulers/__init__.py
   pipelines/mvsplit/pipeline_mvsplit_dit.py
 ```
 
@@ -51,17 +51,14 @@ If you want to bundle a local VAE directory, pass `--copy-vae /path/to/vae`.
 
 ```python
 from diffusers import MVSplitDiTTransformer2DModel, MVSplitDiTPipeline
-from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from transformers import AutoModel, AutoTokenizer
 
 transformer = MVSplitDiTTransformer2DModel(...)
-scheduler = FlowMatchEulerDiscreteScheduler()
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
 text_encoder = AutoModel.from_pretrained("Qwen/Qwen3-0.6B")
 
 pipe = MVSplitDiTPipeline(
     transformer=transformer,
-    scheduler=scheduler,
     tokenizer=tokenizer,
     text_encoder=text_encoder,
     vae=None,  # or a compatible VAE module
