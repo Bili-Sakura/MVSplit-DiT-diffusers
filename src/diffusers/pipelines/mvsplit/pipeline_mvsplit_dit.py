@@ -39,7 +39,8 @@ class MVSplitDiTPipeline(DiffusionPipeline):
     Text-to-latent/image pipeline for MVSplit DiT.
 
     The pipeline uses the standard Diffusers scheduler interface and expects an
-    explicit scheduler module (for example `FlowMatchEulerDiscreteScheduler`).
+    explicit scheduler module (for example
+    `FlowMatchEulerDiscreteScheduler(shift=4.0)`).
     """
 
     model_cpu_offload_seq = "text_encoder->transformer->vae"

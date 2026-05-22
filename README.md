@@ -55,7 +55,7 @@ from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from transformers import AutoModel, AutoTokenizer
 
 transformer = MVSplitDiTTransformer2DModel(...)
-scheduler = FlowMatchEulerDiscreteScheduler()
+scheduler = FlowMatchEulerDiscreteScheduler(shift=4.0)
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
 text_encoder = AutoModel.from_pretrained("Qwen/Qwen3-0.6B")
 

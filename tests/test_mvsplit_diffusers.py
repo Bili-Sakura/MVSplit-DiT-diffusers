@@ -27,7 +27,7 @@ def test_transformer_forward_shape():
 
 
 def test_scheduler_step_matches_time_shifted_euler():
-    scheduler = FlowMatchEulerDiscreteScheduler()
+    scheduler = FlowMatchEulerDiscreteScheduler(shift=4.0)
     scheduler.set_timesteps(2)
     sample = torch.ones(1, 2, 2, 2)
     velocity = torch.full_like(sample, 0.5)
@@ -66,7 +66,7 @@ def test_pipeline_latent_output_smoke():
         mlp_hidden_dim=64,
         context_dim=16,
     )
-    scheduler = FlowMatchEulerDiscreteScheduler()
+    scheduler = FlowMatchEulerDiscreteScheduler(shift=4.0)
     pipe = MVSplitDiTPipeline(
         transformer=transformer,
         scheduler=scheduler,

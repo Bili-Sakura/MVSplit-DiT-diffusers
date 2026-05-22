@@ -145,7 +145,7 @@ def main():
             raise SystemExit(1)
     model.save_pretrained(transformer_dir, safe_serialization=args.safe_serialization)
 
-    scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000)
+    scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=4.0)
     scheduler.save_pretrained(scheduler_dir)
 
     if args.check_load:
