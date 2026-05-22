@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import inspect
 import math
 from typing import Optional, Tuple, Union
 
@@ -41,18 +42,64 @@ except Exception:
         return wrapper
 
 
+try:
+    from diffusers.models.activations import SwiGLU as DiffusersSwiGLU
+    from diffusers.models.embeddings import PatchEmbed as DiffusersPatchEmbed
+    from diffusers.models.embeddings import apply_rotary_emb as diffusers_apply_rotary_emb
+    from diffusers.models.normalization import RMSNorm as DiffusersRMSNorm
+except Exception:
+    DiffusersPatchEmbed = None
+    DiffusersRMSNorm = None
+    DiffusersSwiGLU = None
+    diffusers_apply_rotary_emb = None
+
+
 @dataclass
 class MVSplitDiTTransformer2DModelOutput(BaseOutput):
     sample: torch.FloatTensor
+
+
+def _instantiate_from_signature(cls, **kwargs):
+    if cls is None:
+        return None
+
+    signature = inspect.signature(cls.__init__)
+    supported_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+    try:
+        return cls(**supported_kwargs)
+    except TypeError:
+        return None
 
 
 class PatchEmbed(nn.Module):
     def __init__(self, patch_size: int, in_channels: int, hidden_size: int):
         super().__init__()
         self.patch_size = patch_size
-        self.proj = nn.Conv2d(in_channels, hidden_size, kernel_size=patch_size, stride=patch_size)
+        self._diffusers_impl = _instantiate_from_signature(
+            DiffusersPatchEmbed,
+            height=1,
+            width=1,
+            patch_size=patch_size,
+            in_channels=in_channels,
+            embed_dim=hidden_size,
+            flatten=True,
+            bias=True,
+            layer_norm=False,
+            pos_embed_type=None,
+        )
+
+        if self._diffusers_impl is None:
+            self.proj = nn.Conv2d(in_channels, hidden_size, kernel_size=patch_size, stride=patch_size)
+        else:
+            self.proj = getattr(self._diffusers_impl, "proj", None)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        if self._diffusers_impl is not None:
+            hidden_states = self._diffusers_impl(hidden_states)
+            if hidden_states.ndim == 4:
+                hidden_states = hidden_states.flatten(2).transpose(1, 2)
+            return hidden_states
+
         hidden_states = self.proj(hidden_states)
         return hidden_states.flatten(2).transpose(1, 2)
 
@@ -81,6 +128,12 @@ class TwoDimRotary(nn.Module):
 
 
 def apply_rotary_emb(hidden_states: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    if diffusers_apply_rotary_emb is not None:
+        try:
+            return diffusers_apply_rotary_emb(hidden_states, cos, sin)
+        except TypeError:
+            return diffusers_apply_rotary_emb(hidden_states, (cos, sin))
+
     original_dtype = hidden_states.dtype
     hidden_states = hidden_states.to(torch.float32)
     half = hidden_states.shape[-1] // 2
@@ -94,13 +147,20 @@ def apply_rotary_emb(hidden_states: torch.Tensor, cos: torch.Tensor, sin: torch.
 class RMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6, trainable: bool = False):
         super().__init__()
-        self.eps = eps
-        if trainable:
-            self.weight = nn.Parameter(torch.ones(dim))
-        else:
-            self.register_buffer("weight", torch.ones(dim), persistent=True)
+        self._diffusers_impl = _instantiate_from_signature(DiffusersRMSNorm, dim=dim, eps=eps)
+        if self._diffusers_impl is None:
+            self.eps = eps
+            if trainable:
+                self.weight = nn.Parameter(torch.ones(dim))
+            else:
+                self.register_buffer("weight", torch.ones(dim), persistent=True)
+        elif not trainable and hasattr(self._diffusers_impl, "weight"):
+            self._diffusers_impl.weight.requires_grad_(False)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        if self._diffusers_impl is not None:
+            return self._diffusers_impl(hidden_states)
+
         original_dtype = hidden_states.dtype
         hidden_states = hidden_states.float()
         hidden_states = hidden_states * torch.rsqrt(hidden_states.pow(2).mean(dim=-1, keepdim=True) + self.eps)
@@ -173,10 +233,15 @@ class FusedMVSplitNorm1(nn.Module):
 class SwiGLU(nn.Module):
     def __init__(self, dim: int, hidden_dim: int, bias: bool = False):
         super().__init__()
-        self.w13 = nn.Linear(dim, hidden_dim * 2, bias=bias)
-        self.w2 = nn.Linear(hidden_dim, dim, bias=bias)
+        self._diffusers_impl = _instantiate_from_signature(DiffusersSwiGLU, dim=dim, hidden_dim=hidden_dim, bias=bias)
+        if self._diffusers_impl is None:
+            self.w13 = nn.Linear(dim, hidden_dim * 2, bias=bias)
+            self.w2 = nn.Linear(hidden_dim, dim, bias=bias)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        if self._diffusers_impl is not None:
+            return self._diffusers_impl(hidden_states)
+
         gate, value = self.w13(hidden_states).chunk(2, dim=-1)
         return self.w2(F.silu(gate) * value)
 
