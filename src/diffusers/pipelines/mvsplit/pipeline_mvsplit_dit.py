@@ -156,10 +156,10 @@ class MVSplitDiTPipeline(DiffusionPipeline):
             device=device,
             generator=generator,
         )
-        timesteps = self.scheduler.set_timesteps(num_inference_steps, device=device, mode="ode")
+        self.scheduler.set_timesteps(num_inference_steps, device=device)
+        timesteps = self.scheduler.timesteps
 
-        for index, timestep in enumerate(timesteps[:-1]):
-            next_timestep = timesteps[index + 1]
+        for timestep in timesteps:
             if do_cfg:
                 model_input = torch.cat([latents, latents], dim=0)
             else:
@@ -180,9 +180,8 @@ class MVSplitDiTPipeline(DiffusionPipeline):
             model_output = self._apply_cfg(model_output, guidance_scale=guidance_scale)
             latents = self.scheduler.step(
                 model_output=model_output,
-                timestep=timestep[None],
+                timestep=timestep,
                 sample=latents,
-                next_timestep=next_timestep[None],
                 generator=generator,
                 return_dict=True,
             ).prev_sample

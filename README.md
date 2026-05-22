@@ -15,8 +15,8 @@ Legacy standalone source files were removed in favor of this structure.
 
 - Replaced script-style model code with a Diffusers-native transformer:
   `MVSplitDiTTransformer2DModel`.
-- Added a native flow-matching scheduler:
-  `MVSplitFlowMatchScheduler`.
+- Reused the Diffusers flow-matching scheduler:
+  `FlowMatchEulerDiscreteScheduler`.
 - Added a text-conditional pipeline:
   `MVSplitDiTPipeline`.
 - Added a conversion script that exports checkpoints in Diffusers directory format:
@@ -51,11 +51,11 @@ If you want to bundle a local VAE directory, pass `--copy-vae /path/to/vae`.
 ## Python usage
 
 ```python
-from diffusers import MVSplitDiTTransformer2DModel, MVSplitFlowMatchScheduler, MVSplitDiTPipeline
+from diffusers import FlowMatchEulerDiscreteScheduler, MVSplitDiTTransformer2DModel, MVSplitDiTPipeline
 from transformers import AutoModel, AutoTokenizer
 
 transformer = MVSplitDiTTransformer2DModel(...)
-scheduler = MVSplitFlowMatchScheduler(time_shift_alpha=4.0)
+scheduler = FlowMatchEulerDiscreteScheduler(shift=4.0)
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
 text_encoder = AutoModel.from_pretrained("Qwen/Qwen3-0.6B")
 
