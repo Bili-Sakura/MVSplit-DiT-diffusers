@@ -5,6 +5,9 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.nn.functional as F
 from torch import nn
+from diffusers.models.activations import SwiGLU
+from diffusers.models.embeddings import PatchEmbed, apply_rotary_emb
+from diffusers.models.normalization import RMSNorm
 
 try:
     from diffusers.configuration_utils import ConfigMixin, register_to_config
@@ -46,17 +49,6 @@ class MVSplitDiTTransformer2DModelOutput(BaseOutput):
     sample: torch.FloatTensor
 
 
-class PatchEmbed(nn.Module):
-    def __init__(self, patch_size: int, in_channels: int, hidden_size: int):
-        super().__init__()
-        self.patch_size = patch_size
-        self.proj = nn.Conv2d(in_channels, hidden_size, kernel_size=patch_size, stride=patch_size)
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.proj(hidden_states)
-        return hidden_states.flatten(2).transpose(1, 2)
-
-
 class TwoDimRotary(nn.Module):
     def __init__(self, dim: int, base: int = 10000):
         super().__init__()
@@ -75,44 +67,16 @@ class TwoDimRotary(nn.Module):
         freqs_h = torch.outer(pos_h, self.inv_freq).unsqueeze(1).repeat(1, width, 1)
         freqs_w = torch.outer(pos_w, self.inv_freq).unsqueeze(0).repeat(height, 1, 1)
         freqs = torch.cat([freqs_h, freqs_w], dim=-1).reshape(height * width, -1)
-        cos = freqs.cos().unsqueeze(0).unsqueeze(0).to(dtype=dtype)
-        sin = freqs.sin().unsqueeze(0).unsqueeze(0).to(dtype=dtype)
+        cos = freqs.cos().to(dtype=dtype)
+        sin = freqs.sin().to(dtype=dtype)
         return cos, sin
-
-
-def apply_rotary_emb(hidden_states: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    original_dtype = hidden_states.dtype
-    hidden_states = hidden_states.to(torch.float32)
-    half = hidden_states.shape[-1] // 2
-    first = hidden_states[..., :half]
-    second = hidden_states[..., half:]
-    rotated_first = first * cos + second * sin
-    rotated_second = -first * sin + second * cos
-    return torch.cat([rotated_first, rotated_second], dim=-1).to(dtype=original_dtype)
-
-
-class RMSNorm(nn.Module):
-    def __init__(self, dim: int, eps: float = 1e-6, trainable: bool = False):
-        super().__init__()
-        self.eps = eps
-        if trainable:
-            self.weight = nn.Parameter(torch.ones(dim))
-        else:
-            self.register_buffer("weight", torch.ones(dim), persistent=True)
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        original_dtype = hidden_states.dtype
-        hidden_states = hidden_states.float()
-        hidden_states = hidden_states * torch.rsqrt(hidden_states.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-        hidden_states = hidden_states * self.weight.float()
-        return hidden_states.to(dtype=original_dtype)
 
 
 class QKNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6, trainable: bool = False):
         super().__init__()
-        self.query_norm = RMSNorm(dim, eps=eps, trainable=trainable)
-        self.key_norm = RMSNorm(dim, eps=eps, trainable=trainable)
+        self.query_norm = RMSNorm(dim, eps=eps, elementwise_affine=trainable)
+        self.key_norm = RMSNorm(dim, eps=eps, elementwise_affine=trainable)
 
     def forward(self, query: torch.Tensor, key: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.query_norm(query), self.key_norm(key)
@@ -170,17 +134,6 @@ class FusedMVSplitNorm1(nn.Module):
         return self._rms_norm(residual + var_update + mean_update)
 
 
-class SwiGLU(nn.Module):
-    def __init__(self, dim: int, hidden_dim: int, bias: bool = False):
-        super().__init__()
-        self.w13 = nn.Linear(dim, hidden_dim * 2, bias=bias)
-        self.w2 = nn.Linear(hidden_dim, dim, bias=bias)
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        gate, value = self.w13(hidden_states).chunk(2, dim=-1)
-        return self.w2(F.silu(gate) * value)
-
-
 class Attention(nn.Module):
     def __init__(
         self,
@@ -216,8 +169,8 @@ class Attention(nn.Module):
         value = self.v_proj(hidden_states).reshape(batch_size, -1, self.num_kv_heads, self.head_dim).transpose(1, 2)
 
         if rope is not None:
-            query = apply_rotary_emb(query, rope[0], rope[1])
-            key = apply_rotary_emb(key, rope[0], rope[1])
+            query = apply_rotary_emb(query, rope)
+            key = apply_rotary_emb(key, rope)
         query, key = self.qk_norm(query, key)
 
         if self.num_groups > 1:
@@ -244,7 +197,10 @@ class DiTBlock(nn.Module):
     ):
         super().__init__()
         self.attn = Attention(hidden_size, num_heads, num_kv_heads, qkv_bias=qkv_bias, trainable_rms=trainable_rms)
-        self.ffn = SwiGLU(hidden_size, mlp_hidden_dim, bias=qkv_bias)
+        self.ffn = nn.Sequential(
+            SwiGLU(hidden_size, mlp_hidden_dim, bias=qkv_bias),
+            nn.Linear(mlp_hidden_dim, hidden_size, bias=qkv_bias),
+        )
         self.norm1 = FusedMVSplitNorm1(hidden_size, eps=norm_eps, init_alpha=init_alpha, init_beta=init_beta)
         self.norm2 = FusedMVSplitNorm1(hidden_size, eps=norm_eps, init_alpha=init_alpha, init_beta=init_beta)
 
@@ -294,9 +250,19 @@ class MVSplitDiTTransformer2DModel(ModelMixin, ConfigMixin):
         self.use_rope = use_rope
         self.rope_dim = hidden_size // (2 * num_heads)
 
-        self.patch_embed = PatchEmbed(patch_size=patch_size, in_channels=in_channels, hidden_size=hidden_size)
-        self.norm_img_input = RMSNorm(hidden_size, eps=norm_eps, trainable=trainable_rms)
-        self.norm_text_input = RMSNorm(hidden_size, eps=norm_eps, trainable=trainable_rms)
+        self.patch_embed = PatchEmbed(
+            height=1,
+            width=1,
+            patch_size=patch_size,
+            in_channels=in_channels,
+            embed_dim=hidden_size,
+            layer_norm=False,
+            flatten=True,
+            bias=True,
+            pos_embed_type=None,
+        )
+        self.norm_img_input = RMSNorm(hidden_size, eps=norm_eps, elementwise_affine=trainable_rms)
+        self.norm_text_input = RMSNorm(hidden_size, eps=norm_eps, elementwise_affine=trainable_rms)
         self.context_proj = nn.Identity() if context_dim == hidden_size else nn.Linear(context_dim, hidden_size, bias=False)
         self.rope = TwoDimRotary(self.rope_dim, base=rope_base) if use_rope else None
 
@@ -366,17 +332,9 @@ class MVSplitDiTTransformer2DModel(ModelMixin, ConfigMixin):
             cos_image, sin_image = self.rope(height_tokens, width_tokens, sequence.device, sequence.dtype)
             text_length = text_tokens.shape[1]
             if text_length > 0:
-                cos_text = torch.ones(
-                    (1, 1, text_length, self.rope_dim),
-                    device=sequence.device,
-                    dtype=sequence.dtype,
-                )
-                sin_text = torch.zeros(
-                    (1, 1, text_length, self.rope_dim),
-                    device=sequence.device,
-                    dtype=sequence.dtype,
-                )
-                rope = (torch.cat([cos_image, cos_text], dim=2), torch.cat([sin_image, sin_text], dim=2))
+                cos_text = torch.ones((text_length, self.rope_dim), device=sequence.device, dtype=sequence.dtype)
+                sin_text = torch.zeros((text_length, self.rope_dim), device=sequence.device, dtype=sequence.dtype)
+                rope = (torch.cat([cos_image, cos_text], dim=0), torch.cat([sin_image, sin_text], dim=0))
             else:
                 rope = (cos_image, sin_image)
 
