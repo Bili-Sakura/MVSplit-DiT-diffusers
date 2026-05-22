@@ -19,7 +19,7 @@ except Exception:
     safe_load_file = None
 
 from diffusers.models.transformers import MVSplitDiTTransformer2DModel
-from diffusers.schedulers import MVSplitFlowMatchScheduler
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 
 
 def _load_state_dict(checkpoint_path: str) -> Dict[str, torch.Tensor]:
@@ -69,7 +69,7 @@ def _write_model_index(output_dir: Path, include_vae: bool, include_text: bool):
     model_index = {
         "_class_name": "MVSplitDiTPipeline",
         "_diffusers_version": "0.36.0",
-        "scheduler": ["diffusers", "MVSplitFlowMatchScheduler"],
+        "scheduler": ["diffusers", "FlowMatchEulerDiscreteScheduler"],
         "transformer": ["diffusers", "MVSplitDiTTransformer2DModel"],
     }
     if include_vae:
@@ -100,7 +100,6 @@ def parse_args():
     parser.add_argument("--norm-eps", type=float, default=1e-5)
     parser.add_argument("--init-alpha", type=float, default=0.0)
     parser.add_argument("--init-beta", type=float, default=0.03)
-    parser.add_argument("--time-shift-alpha", type=float, default=4.0)
     parser.add_argument("--safe-serialization", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--check-load", action="store_true", help="Instantiate model and verify state_dict loading.")
     parser.add_argument(
@@ -146,11 +145,7 @@ def main():
             raise SystemExit(1)
     model.save_pretrained(transformer_dir, safe_serialization=args.safe_serialization)
 
-    scheduler = MVSplitFlowMatchScheduler(
-        mode="ode",
-        num_train_timesteps=1000,
-        time_shift_alpha=args.time_shift_alpha,
-    )
+    scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000)
     scheduler.save_pretrained(scheduler_dir)
 
     if args.check_load:

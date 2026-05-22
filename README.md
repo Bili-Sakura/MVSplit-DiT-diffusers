@@ -5,7 +5,7 @@ This repository now follows a native Diffusers-compatible layout under:
 ```text
 src/diffusers/
   models/transformers/transformer_mvsplit_dit.py
-  schedulers/scheduling_flow_match_mvsplit.py
+  schedulers/scheduling_flow_match_euler_discrete.py
   pipelines/mvsplit/pipeline_mvsplit_dit.py
 ```
 
@@ -15,8 +15,8 @@ Legacy standalone source files were removed in favor of this structure.
 
 - Replaced script-style model code with a Diffusers-native transformer:
   `MVSplitDiTTransformer2DModel`.
-- Added a native flow-matching scheduler:
-  `MVSplitFlowMatchScheduler`.
+- Uses Diffusers' flow-matching scheduler:
+  `FlowMatchEulerDiscreteScheduler`.
 - Added a text-conditional pipeline:
   `MVSplitDiTPipeline`.
 - Added a conversion script that exports checkpoints in Diffusers directory format:
@@ -31,8 +31,7 @@ python3 scripts/convert_mvsplit_to_diffusers.py \
   --depth 1000 \
   --hidden-size 1024 \
   --num-heads 8 \
-  --num-kv-heads 8 \
-  --time-shift-alpha 4.0
+  --num-kv-heads 8
 ```
 
 This creates:
@@ -51,11 +50,12 @@ If you want to bundle a local VAE directory, pass `--copy-vae /path/to/vae`.
 ## Python usage
 
 ```python
-from diffusers import MVSplitDiTTransformer2DModel, MVSplitFlowMatchScheduler, MVSplitDiTPipeline
+from diffusers import MVSplitDiTTransformer2DModel, MVSplitDiTPipeline
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from transformers import AutoModel, AutoTokenizer
 
 transformer = MVSplitDiTTransformer2DModel(...)
-scheduler = MVSplitFlowMatchScheduler(time_shift_alpha=4.0)
+scheduler = FlowMatchEulerDiscreteScheduler()
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
 text_encoder = AutoModel.from_pretrained("Qwen/Qwen3-0.6B")
 

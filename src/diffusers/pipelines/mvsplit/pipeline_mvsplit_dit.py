@@ -35,6 +35,13 @@ class MVSplitDiTPipelineOutput(BaseOutput):
 
 
 class MVSplitDiTPipeline(DiffusionPipeline):
+    """
+    Text-to-latent/image pipeline for MVSplit DiT.
+
+    The pipeline uses the standard Diffusers scheduler interface and is intended
+    to run with `FlowMatchEulerDiscreteScheduler` from `diffusers`.
+    """
+
     model_cpu_offload_seq = "text_encoder->transformer->vae"
     _optional_components = ["vae", "text_encoder", "tokenizer"]
 
@@ -128,6 +135,7 @@ class MVSplitDiTPipeline(DiffusionPipeline):
         output_type: str = "pil",
         return_dict: bool = True,
     ) -> Union[MVSplitDiTPipelineOutput, Tuple]:
+        """Run denoising with a FlowMatch Euler scheduler and decode the output."""
         device = self._execution_device
         model_dtype = next(self.transformer.parameters()).dtype
 
@@ -156,10 +164,10 @@ class MVSplitDiTPipeline(DiffusionPipeline):
             device=device,
             generator=generator,
         )
-        timesteps = self.scheduler.set_timesteps(num_inference_steps, device=device, mode="ode")
+        self.scheduler.set_timesteps(num_inference_steps, device=device)
+        timesteps = self.scheduler.timesteps
 
-        for index, timestep in enumerate(timesteps[:-1]):
-            next_timestep = timesteps[index + 1]
+        for timestep in timesteps:
             if do_cfg:
                 model_input = torch.cat([latents, latents], dim=0)
             else:
@@ -180,9 +188,8 @@ class MVSplitDiTPipeline(DiffusionPipeline):
             model_output = self._apply_cfg(model_output, guidance_scale=guidance_scale)
             latents = self.scheduler.step(
                 model_output=model_output,
-                timestep=timestep[None],
+                timestep=timestep,
                 sample=latents,
-                next_timestep=next_timestep[None],
                 generator=generator,
                 return_dict=True,
             ).prev_sample
