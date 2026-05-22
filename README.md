@@ -1,108 +1,82 @@
-# MVSplit-DiT (1000 layers)
+# MVSplit-DiT Diffusers Refactor
 
-Paper: <https://arxiv.org/abs/2605.06169>  
-Released weights: <https://huggingface.co/StableKirito/mvsplit-dit-1000l>
+This repository now follows a native Diffusers-compatible layout under:
 
-## Files
-
-```
-dit.py                              # DiT model (FusedMVSplitNorm1 residual + RoPE + QK-Norm)
-text_encoder.py                     # Qwen3 text encoder wrapper
-vae.py                              # FLUX.2 AutoEncoder
-sample.py                           # Inference / image sampling entry point
-sample_prompts.txt                  # Example prompts (one per line)
-kernels/
-  fused_mvsplit_rmsnorm.py          # Triton kernel: MVSplit + RMSNorm
-  rmsnorm.py                        # Triton RMSNorm + QK-Norm
-  rope.py                           # Triton RoPE
-  swiglu.py                         # Triton packed SwiGLU
-  _common.py
+```text
+src/diffusers/
+  models/transformers/transformer_mvsplit_dit.py
+  schedulers/scheduling_flow_match_mvsplit.py
+  pipelines/mvsplit/pipeline_mvsplit_dit.py
 ```
 
-All Triton kernels have PyTorch fallbacks, so the model runs on machines without Triton — just slower.
+Legacy standalone source files were removed in favor of this structure.
 
-## Installation
+## What changed
+
+- Replaced script-style model code with a Diffusers-native transformer:
+  `MVSplitDiTTransformer2DModel`.
+- Added a native flow-matching scheduler:
+  `MVSplitFlowMatchScheduler`.
+- Added a text-conditional pipeline:
+  `MVSplitDiTPipeline`.
+- Added a conversion script that exports checkpoints in Diffusers directory format:
+  `scripts/convert_mvsplit_to_diffusers.py`.
+
+## Convert an existing checkpoint
 
 ```bash
-pip install -r requirements.txt
-# Triton (required for the fast path; ships with PyTorch on Linux+CUDA):
-#   pip install triton
+python3 scripts/convert_mvsplit_to_diffusers.py \
+  --checkpoint /path/to/model.pt \
+  --output /path/to/mvsplit-diffusers \
+  --depth 1000 \
+  --hidden-size 1024 \
+  --num-heads 8 \
+  --num-kv-heads 8 \
+  --time-shift-alpha 4.0
 ```
 
-Tested with PyTorch 2.x on CUDA. CPU works for the fallback path but is impractical at this depth.
+This creates:
 
-## Weights
+```text
+/path/to/mvsplit-diffusers/
+  model_index.json
+  transformer/config.json
+  transformer/diffusion_pytorch_model.safetensors (or .bin)
+  scheduler/scheduler_config.json
+  text_encoder_pretrained_model_name_or_path.txt
+```
 
-Download three artifacts:
+If you want to bundle a local VAE directory, pass `--copy-vae /path/to/vae`.
 
-1. **DiT checkpoint** — `model.pt` from the HF repo above.
-2. **FLUX.2 AE** — `flux2_ae.safetensors` (available as `ae.safetensors` in <https://huggingface.co/black-forest-labs/FLUX.2-dev>; rename or pass the original name via `--flux_vae_path`).
-3. **Qwen3 text encoder** — `Qwen/Qwen3-0.6B` is fetched automatically by `transformers` on first run; or set `--qwen_model_path` to a local snapshot.
+## Python usage
 
-Place them anywhere and pass the paths via CLI flags (the defaults assume `/workspace/...`).
+```python
+from diffusers import MVSplitDiTTransformer2DModel, MVSplitFlowMatchScheduler, MVSplitDiTPipeline
+from transformers import AutoModel, AutoTokenizer
 
-## Sampling
+transformer = MVSplitDiTTransformer2DModel(...)
+scheduler = MVSplitFlowMatchScheduler(time_shift_alpha=4.0)
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
+text_encoder = AutoModel.from_pretrained("Qwen/Qwen3-0.6B")
+
+pipe = MVSplitDiTPipeline(
+    transformer=transformer,
+    scheduler=scheduler,
+    tokenizer=tokenizer,
+    text_encoder=text_encoder,
+    vae=None,  # or a compatible VAE module
+)
+
+result = pipe(prompt="a red panda climbing a bamboo stalk", output_type="latent")
+latents = result.images
+```
+
+## Tests
 
 ```bash
-# Custom prompt
-python sample.py \
-    --checkpoint_path /path/to/model.pt \
-    --flux_vae_path   /path/to/flux2_ae.safetensors \
-    --qwen_model_path Qwen/Qwen3-0.6B \
-    --prompt "a red panda climbing a bamboo stalk" \
-    --output_dir ./samples
-
-# Pick a specific line from the prompts file (1-indexed)
-python sample.py --line 5
-
-# Randomly sample N prompts (reproducible with --seed)
-python sample.py --num_samples 4 --seed 42
-
-# Generate every prompt in the file
-python sample.py --all
+PYTHONPATH=src python3 -m pytest tests/test_mvsplit_diffusers.py
 ```
-
-Outputs `<name>.png` plus a `metadata.jsonl` log under `--output_dir`.
-
-### Key sampling flags
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--image_size` | 256 | Square output side in pixels (must be a multiple of 16). |
-| `--num_inference_steps` | 35 | Euler steps for the flow-matching ODE. |
-| `--cfg_scale` | 2.0 | Classifier-free guidance; `>1.0` enables CFG. |
-| `--time_shift_alpha` | 4.0 | Time-shift in the flow schedule. **Must match training.** |
-| `--batch_size` | 4 | Prompts per forward pass. |
-
-### Architecture flags (must match the released checkpoint)
-
-| Flag | Default | Notes |
-|---|---|---|
-| `--model_width` | 1024 | Hidden size. |
-| `--model_head_dim` | 128 | → 8 attention heads (num_kv_heads = 8, no GQA in this config). |
-| `--depth_stages` | 50 | Total depth = `depth_stages * blocks_per_stage * 2`. |
-| `--blocks_per_stage` | 10 | Default config gives **1000** transformer blocks. |
-| `--rope_base` | 10000 | 2-D RoPE base. |
-| `--train_bias_and_rms` | off | Toggle if the checkpoint was trained with QKV bias + trainable RMSNorm. |
-
-The default flags reproduce the released 1000-layer checkpoint.
-
-## Third-party code
-
-The Triton kernels under `kernels/` (`rmsnorm.py`, `swiglu.py`, `rope.py`) are
-derived from [Unsloth](https://github.com/unslothai/unsloth). Each file carries
-the upstream copyright header, license text, and a list of modifications. See
-[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for a top-level summary.
 
 ## Citation
 
 Paper: <https://arxiv.org/abs/2605.06169>
-
-```bibtex
-@article{lu2026mms,
-  title   = {Mean Mode Screaming: Mean--Variance Split Residuals for 1000-Layer Diffusion Transformers},
-  author  = {Lu, Pengqi},
-  journal = {arXiv preprint arXiv:2605.06169},
-  year    = {2026},
-}
-```
